@@ -17,6 +17,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+import logging
+
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils import check_array
 from torch.utils.data import DataLoader, TensorDataset
@@ -330,7 +332,6 @@ class DeepSVDD(BaseDetector):
         best_loss = float('inf')
         best_model_dict = None
         optimizer = optimizer_dict[self.optimizer](self.model_.parameters(), weight_decay=self.l2_regularizer)
-        # w_d = 1e-6 * sum([torch.linalg.norm(w) for w in self.model_.parameters()])
 
         for epoch in range(self.epochs):
             self.model_.train()
@@ -343,7 +344,7 @@ class DeepSVDD(BaseDetector):
                 outputs = self.model_(batch_x)
                 dist = torch.sum((outputs - self.c) ** 2, dim=-1)
 
-                w_d = 1e-6 * sum([torch.linalg.norm(w) for w in self.model_.parameters()])
+                w_d = sum([torch.linalg.norm(w) for w in self.model_.parameters()])
 
                 if self.use_ae:
                     loss = torch.mean(dist) + w_d + torch.mean(torch.square(outputs - batch_x))
@@ -355,7 +356,7 @@ class DeepSVDD(BaseDetector):
                 optimizer.step()
                 epoch_loss += loss.item()
             epoch_loss /= len(dataloader)
-            print(f"Epoch {epoch + 1}/{self.epochs}, Loss: {epoch_loss}")
+            logging.info(f"Epoch {epoch + 1}/{self.epochs}, Loss: {epoch_loss}")
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 best_model_dict = self.model_.state_dict()
