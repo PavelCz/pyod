@@ -95,6 +95,8 @@ class InnerDeepSVDD(nn.Module):
             self.embedder_features = n_features
             self.linear_features = n_features + self.input_shape[-1]
             self.embedder = self._build_embedder()
+        elif self.feature_type == "hidden_dist":
+            self.linear_features = self.input_shape[1] + self.input_shape[2]
         self.fc_part = self._build_fc()
         self.c = None  # Center of the hypersphere for DeepSVDD
 
@@ -108,7 +110,7 @@ class InnerDeepSVDD(nn.Module):
         elif self.feature_type == "dist":
             X_norm = X_norm.softmax(dim=-1)
             output = self.forward(X_norm)
-        elif self.feature_type == "hidden_obs":
+        elif self.feature_type in ["hidden_obs", "hidden_dist"]:
             output = self.forward([X_norm[0], X_norm[1]])
         out = intermediate_output['net_output']
         hook_handle.remove()
@@ -163,6 +165,9 @@ class InnerDeepSVDD(nn.Module):
             x = torch.cat([features, x[1]], dim=-1)
         elif self.feature_type == "dist":
             x = x.softmax(dim=-1)
+        elif self.feature_type == "hidden_dist":
+            dist = x[1].softmax(dim=-1)
+            x = torch.cat([x[0], dist], dim=-1)
         x = self.fc_part(x)
         return x
 
@@ -328,7 +333,7 @@ class DeepSVDD(BaseDetector):
             self.model_._init_c(X_norm)
 
         # Prepare DataLoader for batch processing
-        if self.feature_type == "hidden_obs":
+        if self.feature_type in ["hidden_obs", "hidden_dist"]:
             dataset = TensorDataset(*X_norm, *X_norm)
         else:
             dataset = TensorDataset(X_norm, X_norm)
@@ -342,7 +347,7 @@ class DeepSVDD(BaseDetector):
             self.model_.train()
             epoch_loss = 0
             for batch in dataloader:
-                if self.feature_type == "hidden_obs":
+                if self.feature_type in ["hidden_obs", "hidden_dist"]:
                     batch_x = batch[0], batch[1]
                 else:
                     batch_x = batch[0]
@@ -403,7 +408,7 @@ class DeepSVDD(BaseDetector):
             if X_img.max() > 1:
                 X_img = X_img / 255.0
             X_norm = X_img if self.feature_type == "obs" else [X_img, X[1]]
-        elif self.feature_type in ["hidden", "dist"]:
+        elif self.feature_type in ["hidden", "dist", "hidden_dist"]:
             X_norm = X
         else:
             raise ValueError(f"Unknown feature type: {self.feature_type}")
