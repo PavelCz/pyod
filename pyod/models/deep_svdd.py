@@ -97,6 +97,10 @@ class InnerDeepSVDD(nn.Module):
             self.embedder = self._build_embedder()
         elif self.feature_type == "hidden_dist":
             self.linear_features = self.input_shape[1] + self.input_shape[2]
+        elif self.feature_type == "obs_dist":
+            self.embedder_features = n_features
+            self.linear_features = n_features + self.input_shape[-1]
+            self.embedder = self._build_embedder()
         self.fc_part = self._build_fc()
         self.c = None  # Center of the hypersphere for DeepSVDD
 
@@ -110,7 +114,7 @@ class InnerDeepSVDD(nn.Module):
         elif self.feature_type == "dist":
             X_norm = X_norm.softmax(dim=-1)
             output = self.forward(X_norm)
-        elif self.feature_type in ["hidden_obs", "hidden_dist"]:
+        elif self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
             output = self.forward([X_norm[0], X_norm[1]])
         out = intermediate_output['net_output']
         hook_handle.remove()
@@ -168,6 +172,10 @@ class InnerDeepSVDD(nn.Module):
         elif self.feature_type == "hidden_dist":
             dist = x[1].softmax(dim=-1)
             x = torch.cat([x[0], dist], dim=-1)
+        elif self.feature_type == "obs_dist":
+            features = self.embedder(x[0])
+            dist = x[1].softmax(dim=-1)
+            x = torch.cat([features, dist], dim=-1)
         x = self.fc_part(x)
         return x
 
@@ -333,7 +341,7 @@ class DeepSVDD(BaseDetector):
             self.model_._init_c(X_norm)
 
         # Prepare DataLoader for batch processing
-        if self.feature_type in ["hidden_obs", "hidden_dist"]:
+        if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
             dataset = TensorDataset(*X_norm, *X_norm)
         else:
             dataset = TensorDataset(X_norm, X_norm)
@@ -347,7 +355,7 @@ class DeepSVDD(BaseDetector):
             self.model_.train()
             epoch_loss = 0
             for batch in dataloader:
-                if self.feature_type in ["hidden_obs", "hidden_dist"]:
+                if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
                     batch_x = batch[0], batch[1]
                 else:
                     batch_x = batch[0]
@@ -402,7 +410,7 @@ class DeepSVDD(BaseDetector):
         return anomaly_scores
 
     def normalization(self, X):
-        if self.feature_type in ["obs", "hidden_obs"]:
+        if self.feature_type in ["obs", "hidden_obs", "obs_dist"]:
             X_img = X if self.feature_type == "obs" else X[0]
             # Normalize the image data if pixel values are in the range [0, 255]
             if X_img.max() > 1:
