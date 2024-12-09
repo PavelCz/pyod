@@ -103,7 +103,10 @@ class InnerDeepSVDD(nn.Module):
         hook_handle = self.fc_part._modules.get('net_output').register_forward_hook(
             lambda module, input, output: intermediate_output.update({'net_output': output})
         )
-        if self.feature_type in ["obs", "hidden", "dist"]:
+        if self.feature_type in ["obs", "hidden"]:
+            output = self.forward(X_norm)
+        elif self.feature_type == "dist":
+            X_norm = X_norm.softmax(dim=-1)
             output = self.forward(X_norm)
         elif self.feature_type == "hidden_obs":
             output = self.forward([X_norm[0], X_norm[1]])
@@ -158,6 +161,8 @@ class InnerDeepSVDD(nn.Module):
         elif self.feature_type == "hidden_obs":
             features = self.embedder(x[0])
             x = torch.cat([features, x[1]], dim=-1)
+        elif self.feature_type == "dist":
+            x = x.softmax(dim=-1)
         x = self.fc_part(x)
         return x
 
