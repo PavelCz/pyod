@@ -172,6 +172,7 @@ class InnerDeepSVDD(nn.Module):
     def forward(self, x):
         feature_type_to_processing = {
             "obs": lambda x: self.embedder(x),
+            "hidden": lambda x: x,
             "hidden_obs": lambda x: torch.cat([self.embedder(x[0]), x[1]], dim=-1),
             "dist": lambda x: x.softmax(dim=-1),
             "hidden_dist": lambda x: torch.cat([x[0], x[1].softmax(dim=-1)], dim=-1),
@@ -322,7 +323,7 @@ class DeepSVDD(BaseDetector):
             input_shape=self.input_shape,
         )
 
-    def fit(self, X, y=None):
+    def fit(self, X, X_threshold, y=None):
         """Fit detector. y is ignored in unsupervised methods.
 
         Parameters
@@ -339,6 +340,7 @@ class DeepSVDD(BaseDetector):
             Fitted estimator.
         """
         X_norm = self.normalization(X)
+        X_norm_th = self.normalization(X_threshold)
 
         if self.c is None:
             self.c = 0.0
@@ -386,7 +388,7 @@ class DeepSVDD(BaseDetector):
                 best_model_dict = self.model_.state_dict()
         self.best_model_dict = best_model_dict
 
-        self.decision_scores_ = self.decision_function(X)
+        self.decision_scores_ = self.decision_function(X_norm_th)
         self._process_decision_scores()
         return self
 
