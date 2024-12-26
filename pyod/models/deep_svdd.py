@@ -75,7 +75,7 @@ class InnerDeepSVDD(nn.Module):
     def __init__(self, n_features, use_ae,
                  hidden_neurons, hidden_activation,
                  output_activation,
-                 dropout_rate, l2_regularizer, feature_type, input_shape=None):
+                 dropout_rate, l2_regularizer, feature_type, benchmark, input_shape=None):
         super(InnerDeepSVDD, self).__init__()
         self.use_ae = use_ae
         self.hidden_neurons = hidden_neurons or [64, 32]
@@ -84,9 +84,10 @@ class InnerDeepSVDD(nn.Module):
         self.dropout_rate = dropout_rate
         self.l2_regularizer = l2_regularizer
         self.feature_type = feature_type
+        self.benchmark = benchmark
         self.input_shape = input_shape
 
-        if self.feature_type in ["obs", "obs_dist", "hidden_obs", "obs_hidden_dist", "learnable_obs_hidden_dist"]:
+        if self.feature_type in ["obs", "obs_dist", "hidden_obs", "obs_hidden_dist"]:
             self.embedder_features = n_features
             self.embedder = self._build_embedder()
 
@@ -100,21 +101,13 @@ class InnerDeepSVDD(nn.Module):
             self.linear_features = self.input_shape[1] + self.input_shape[2]
         elif self.feature_type == "obs_hidden_dist":
             self.linear_features = n_features + self.input_shape[-2] + self.input_shape[-1]
-        elif self.feature_type == "learnable_obs_hidden_dist":
-            self.linear_features = n_features + self.input_shape[-2] + self.input_shape[-1]
-            # learnable weights for each feature
-            self.w_obs = nn.Parameter(torch.randn(1))
-            self.w_hidden = nn.Parameter(torch.randn(1))
-            self.w_dist = nn.Parameter(torch.randn(1))
 
         self.fc_part = self._build_fc()
         self.c = None  # Center of the hypersphere for DeepSVDD
 
     def _init_c(self, X_norm, eps=0.1):
         intermediate_output = {}
-        hook_handle = self.fc_part._modules.get('net_output').register_forward_hook(
-            lambda module, input, output: intermediate_output.update({'net_output': output})
-        )
+        hook_handle = self.fc_part._modules.get('net_output').register_forward_hook(lambda module, input, output: intermediate_output.update({'net_output': output}))
         if self.feature_type in ["obs", "hidden"]:
             output = self.forward(X_norm)
         elif self.feature_type == "dist":
@@ -122,7 +115,7 @@ class InnerDeepSVDD(nn.Module):
             output = self.forward(X_norm)
         elif self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
             output = self.forward([X_norm[0], X_norm[1]])
-        elif self.feature_type in ["obs_hidden_dist", "learnable_obs_hidden_dist"]:
+        elif self.feature_type in ["obs_hidden_dist"]:
             output = self.forward([X_norm[0], X_norm[1], X_norm[2]])
         out = intermediate_output['net_output']
         hook_handle.remove()
@@ -178,7 +171,6 @@ class InnerDeepSVDD(nn.Module):
             "hidden_dist": lambda x: torch.cat([x[0], x[1].softmax(dim=-1)], dim=-1),
             "obs_dist": lambda x: torch.cat([self.embedder(x[0]), x[1].softmax(dim=-1)], dim=-1),
             "obs_hidden_dist": lambda x: torch.cat([self.embedder(x[0]), x[1], x[2].softmax(dim=-1)], dim=-1),
-            "learnable_obs_hidden_dist": lambda x: torch.cat([self.w_obs * self.embedder(x[0]), self.w_hidden * x[1], self.w_dist * x[2].softmax(dim=-1)], dim=-1),
         }
         x = feature_type_to_processing[self.feature_type](x)
         x = self.fc_part(x)
@@ -281,7 +273,7 @@ class DeepSVDD(BaseDetector):
                  hidden_activation='relu',
                  output_activation='sigmoid', optimizer='adam', epochs=100,
                  batch_size=32,
-                 dropout_rate=0.2, l2_regularizer=0.1, feature_type="obs", validation_size=0.1,
+                 dropout_rate=0.2, l2_regularizer=0.1, feature_type="obs", benchmark="procgen", validation_size=0.1,
                  preprocessing=True,
                  verbose=1, random_state=None, contamination=0.1, input_shape=None):
         super(DeepSVDD, self).__init__(contamination=contamination)
@@ -298,6 +290,7 @@ class DeepSVDD(BaseDetector):
         self.dropout_rate = dropout_rate
         self.l2_regularizer = l2_regularizer
         self.feature_type = feature_type
+        self.benchmark = benchmark
         self.validation_size = validation_size
         self.preprocessing = preprocessing
         self.verbose = verbose
@@ -320,6 +313,7 @@ class DeepSVDD(BaseDetector):
             dropout_rate=self.dropout_rate,
             l2_regularizer=self.l2_regularizer,
             feature_type=self.feature_type,
+            benchmark=self.benchmark,
             input_shape=self.input_shape,
         )
 
@@ -339,6 +333,16 @@ class DeepSVDD(BaseDetector):
         self : object
             Fitted estimator.
         """
+
+        if self.benchmark == "minigrid":
+            if self.feature_type == "obs_hidden_dist":
+                # removing direction from the input. in minigrid, it's the "direction"
+                X.pop(0)
+                X_threshold.pop(0)
+                # removing text from the input. in minigrid, it's the "mission"
+                X.pop(1)
+                X_threshold.pop(1)
+
         X_norm = self.normalization(X)
         X_norm_th = self.normalization(X_threshold)
 
@@ -347,7 +351,7 @@ class DeepSVDD(BaseDetector):
             self.model_._init_c(X_norm)
 
         # Prepare DataLoader for batch processing
-        if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist", "obs_hidden_dist", "learnable_obs_hidden_dist"]:
+        if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist", "obs_hidden_dist"]:
             dataset = TensorDataset(*X_norm, *X_norm)
         else:
             dataset = TensorDataset(X_norm, X_norm)
@@ -363,7 +367,7 @@ class DeepSVDD(BaseDetector):
             for batch in dataloader:
                 if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
                     batch_x = batch[0], batch[1]
-                elif self.feature_type in ["obs_hidden_dist", "learnable_obs_hidden_dist"]:
+                elif self.feature_type in ["obs_hidden_dist"]:
                     batch_x = batch[0], batch[1], batch[2]
                 else:
                     batch_x = batch[0]
@@ -409,6 +413,8 @@ class DeepSVDD(BaseDetector):
             The anomaly score of the input samples.
         """
         # Normalize data if pixel values are in [0, 255] range
+        if isinstance(X[0], dict):
+            X[0] = X[0]["image"]
         X = self.normalization(X)
         self.model_.eval()
         with torch.no_grad():
@@ -418,7 +424,7 @@ class DeepSVDD(BaseDetector):
         return anomaly_scores
 
     def normalization(self, X):
-        if self.feature_type in ["obs", "hidden_obs", "obs_dist", "obs_hidden_dist", "learnable_obs_hidden_dist"]:
+        if self.feature_type in ["obs", "hidden_obs", "obs_dist", "obs_hidden_dist"]:
             X_img = X if self.feature_type == "obs" else X[0]
             # Normalize the image data if pixel values are in the range [0, 255]
             if X_img.max() > 1:
