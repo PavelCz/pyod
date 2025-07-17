@@ -346,9 +346,16 @@ class DeepSVDD(BaseDetector):
         X_norm = self.normalization(X)
         X_norm_th = self.normalization(X_threshold)
 
+        model_device = next(self.model_.parameters()).device
+
         if self.c is None:
             self.c = 0.0
+
+            # We move things around devices a bit to avoid having to move the entire
+            # dataset to the GPU.
+            self.model_.to(X_norm.device)
             self.model_._init_c(X_norm)
+            self.model_.to(model_device)
 
         # Prepare DataLoader for batch processing
         if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist", "obs_hidden_dist"]:
@@ -365,6 +372,7 @@ class DeepSVDD(BaseDetector):
             self.model_.train()
             epoch_loss = 0
             for batch in dataloader:
+                batch = [b.to(model_device) for b in batch]
                 if self.feature_type in ["hidden_obs", "hidden_dist", "obs_dist"]:
                     batch_x = batch[0], batch[1]
                 elif self.feature_type in ["obs_hidden_dist"]:
@@ -392,7 +400,11 @@ class DeepSVDD(BaseDetector):
                 best_model_dict = self.model_.state_dict()
         self.best_model_dict = best_model_dict
 
-        self.decision_scores_ = self.decision_function(X_norm_th)
+        scores = []
+        for x_i in X_norm_th:
+            x_i = x_i.to(model_device)
+            scores.append(self.decision_function(x_i.unsqueeze(0)))
+        self.decision_scores_ = np.concatenate(scores, axis=0)
         self._process_decision_scores()
         return self
 
